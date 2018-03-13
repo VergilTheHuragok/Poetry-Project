@@ -1,10 +1,11 @@
 import socket
 import math
 import time
+import threading
 
 import pygame
 
-LOCAL_TEST = True
+LOCAL_TEST = False  # Set True to skip socket connection
 FLAGS = pygame.VIDEORESIZE + pygame.FULLSCREEN
 RESOLUTION = [1280, 768]
 
@@ -18,6 +19,8 @@ MIN_FORCE = .5
 WALL_WEIGHT = 500
 BALL_ACCEL = 10
 JUMP_VEL = 9
+
+BUFFER_SIZE = 1024
 
 
 def get_millis():
@@ -110,14 +113,30 @@ def get_dist(point1, point2):
         (point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
 
 
-class Player:
+class Player(threading.Thread):
 
     def __init__(self, _connection=None):
+        super().__init__()
         self.connection = _connection
         self.pos = None
         self.radius = None
         self.vel = None
         self.mass = 10
+
+    def run(self):
+        while True:
+            time.sleep(.1)
+            try:
+                data = self.connection.recv(BUFFER_SIZE)
+            except ConnectionResetError:
+                print("Server has closed")
+                break
+
+            if not data:
+                print("Lost connection")
+                break
+            print(data.decode())
+            self.pos, self.vel = data.decode()
 
     def reset(self, left=True):
         """Resets player position"""
@@ -221,11 +240,15 @@ remote_player = None
 
 if not LOCAL_TEST:
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_host = get_input("Enter the IP: ")
     server_port = get_int("Enter the port: ")
 
     if check_input("Host", "Host or Join? ", ["Host", "Join"]):
         # HOST
+        server_host = socket.gethostbyname(socket.gethostname())
+        if not check_input("Yes", "Host on " + server_host + ":" + str(
+                server_port) + "? ", ["Yes", "No"]):
+            # Do not host on machine port for some reason
+            server_host = get_input("Enter the IP: ")
         try:
             server_sock.bind((server_host, server_port))
         except OSError:
@@ -238,6 +261,7 @@ if not LOCAL_TEST:
         remote_player = Player(connection)
     else:
         # Join
+        server_host = get_input("Enter the IP: ")
         try:
             server_sock.connect((server_host, server_port))
         except OSError:
@@ -251,6 +275,7 @@ display = pygame.display.set_mode(RESOLUTION, FLAGS)
 
 local_player.reset()
 remote_player.reset(False)
+remote_player.start()
 balls = [local_player, remote_player]
 secs = 0
 sim_time = get_millis()
@@ -324,6 +349,8 @@ while not quit_running:
         i += 1
         if i >= len(balls):
             break
+
+    remote_player.update()
 
     pygame.display.flip()
     display.fill((0, 0, 0))
