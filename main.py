@@ -20,7 +20,7 @@ WALL_WEIGHT = 500
 BALL_ACCEL = 10
 JUMP_VEL = 9
 
-BUFFER_SIZE = 1024
+BUFFER_SIZE = 24
 
 
 def get_millis():
@@ -352,9 +352,8 @@ while not quit_running:
         if i >= len(balls):
             break
 
-    data_string = "[" + str(local_player.pos) + ", " + str(
-        local_player.vel) + "]"
-    local_player.connection.sendall(data_string.encode())
+    data_string = "[" + f'{local_player.pos:.10f}'[:10] + ", " + f'{local_player.vel:.10f}'[:10] + "]"
+    remote_player.connection.sendall(data_string.encode())
 
     pygame.display.flip()
     display.fill((0, 0, 0))
