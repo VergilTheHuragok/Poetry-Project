@@ -23,10 +23,12 @@ WALL_WEIGHT = 500
 BALL_ACCEL = 10
 JUMP_VEL = 9
 
+WIN_ARC = .5
+
 BUFFER_SIZE = 32
 BUFFER_PART = 8
 
-SLEEP_TIME = 0
+SLEEP_TIME = .01
 
 clock = pygame.time.Clock()
 
@@ -35,10 +37,15 @@ recv_time = -1000
 send_int = -553
 recv_int = -553
 
-PING_UPDATE = 1000
-PING_SIZE = 25
+PING_UPDATE = 500
+PING_FACTOR = 10
+PING_SIZE = 15
 ping_time = 0
 
+SEND_LOCK = threading.Lock()
+
+enemy_wins = 0
+my_wins = 0
 
 def get_millis():
     return time.time() * 1000
@@ -143,8 +150,8 @@ class Player(threading.Thread):
         self.local = None
 
     def run(self):
-        global quit_running, send_time, recv_time, recv_int, send_int
-        while True:
+        global quit_running, send_time, recv_time, recv_int, send_int, enemy_wins
+        while not quit_running:
             time.sleep(SLEEP_TIME)
             if not self.local:
                 try:
@@ -156,22 +163,28 @@ class Player(threading.Thread):
                 if not data:
                     print("Lost connection")
                     break
-                data = unformat_data(data.decode())
-                if not isinstance(data, type(None)):
-                    self.pos = data[0:2]
-                    self.vel = data[2:4]
-                recv_int = get_millis() * 1000 - recv_time
-                recv_time = get_millis() * 1000
+                if data.decode().startswith("WIN"):
+                    enemy_wins += 1
+                    reset()
+                else:
+                    data = unformat_data(data.decode())
+                    if not isinstance(data, type(None)):
+                        self.pos = data[0:2]
+                        self.vel = data[2:4]
+                recv_int = get_millis() * PING_FACTOR - recv_time
+                recv_time = get_millis() * PING_FACTOR
             else:  # TODO: Only send remote input. Calc all on local
                 data_string = format_data(*self.pos, *self.vel)
+                SEND_LOCK.acquire()
                 try:
                     remote_player.connection.sendall(data_string.encode())
                 except ConnectionResetError:
                     print("Player left")
                     quit_running = True
                     raise SystemExit
-                send_int = get_millis() * 1000 - send_time
-                send_time = get_millis() * 1000
+                SEND_LOCK.release()
+                send_int = get_millis() * PING_FACTOR - send_time
+                send_time = get_millis() * PING_FACTOR
 
     def reset(self, host=True, local=False):
         """Resets player position"""
@@ -258,6 +271,10 @@ class Player(threading.Thread):
 
                 angle1 = angle_of_points(self.pos, _ball.pos)
                 angle2 = angle_of_points(_ball.pos, self.pos)
+                if self.local:
+                    if -WIN_ARC < angle1 < WIN_ARC:
+                        # Jumped on opponent's head
+                        return "WIN"
                 n_dist2 = dist * (
                     self.radius / (self.radius + _ball.radius))
 
@@ -271,6 +288,11 @@ class Player(threading.Thread):
 
     def on_ground(self):
         return self.pos[1] >= display.get_height() - self.radius * 1.5
+
+
+def reset():
+    local_player.reset(hosting, True)
+    remote_player.reset(not hosting, False)
 
 
 def format_data(*data):
@@ -344,8 +366,9 @@ else:
 
 display = pygame.display.set_mode(RESOLUTION, FLAGS)
 
-local_player.reset(hosting, True)
-remote_player.reset(not hosting, False)
+quit_running = False
+
+reset()
 remote_player.start()
 local_player.start()
 balls = [local_player, remote_player]
@@ -354,7 +377,6 @@ sim_time = get_millis()
 
 ball_dir = "STOP"
 
-quit_running = False
 while not quit_running:
     if ball_dir == "STOPPING":
         ball_dir = "STOP"
@@ -407,11 +429,16 @@ while not quit_running:
     sim_time = new_sim_time
 
     collisions = []
+    win = False
     i = 0
-    while True:
+    while not win:
         j = 0
-        while True:
+        while not win:
             collisions = balls[i].collide(balls[j], collisions)
+            if collisions == "WIN":
+                my_wins += 1
+                win = True
+                break
             if balls[i].tick(secs, balls):
                 i -= 1
             balls[i].render()
@@ -422,14 +449,30 @@ while not quit_running:
         if i >= len(balls):
             break
 
+    if win:
+        reset()
+        SEND_LOCK.acquire()
+        try:
+            remote_player.connection.sendall("WIN".ljust(BUFFER_SIZE, " ").encode())
+        except ConnectionResetError:
+            print("Player left")
+            quit_running = True
+            raise SystemExit
+        SEND_LOCK.release()
     if get_millis() - ping_time >= PING_UPDATE:
         pings = str(int(send_int)).rjust(5) + " | " + str(int(recv_int)).rjust(5)
         ping_time = get_millis()
     font = pygame.font.SysFont("monospace", PING_SIZE)
     label = font.render(pings, 1, (255, 255, 255))
     width, height = font.size(pings)
-    display.blit(label, (int(display.get_width() - width * 1.25), height))
+    display.blit(label, (int(display.get_width() - width), height))
+    score = str(my_wins) + " | " + str(enemy_wins)
+    label = font.render(score.strip(" "), 1, (50, 50, 255))
+    width, height = font.size(score.strip(" "))
+    display.blit(label, (0, height))
 
     pygame.display.flip()
     display.fill((0, 0, 0))
-    time.sleep(SLEEP_TIME)
+    # time.sleep(SLEEP_TIME)
+
+# TODO: Add local play
