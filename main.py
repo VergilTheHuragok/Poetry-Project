@@ -8,22 +8,23 @@ from pygame.image import load
 import pygame.gfxdraw
 
 from configs import get_game_root
+from poetry import get_all_poets, find_poet
 
 pygame.init()
 
 FLAGS = pygame.VIDEORESIZE
-RESOLUTION = [800, 500]
+RESOLUTION = [1600, 900]
 
 y_gravity = -9.81
 x_gravity = 0
 grid_scale = RESOLUTION[1] / 4
 time_scale = 1000
-WALLS = ["WALL", "WALL", "WALL", "WALL"]
-EFFICIENCY = .5
-MIN_FORCE = .5
+WALLS = ["WALL", "HOLE", "WALL", "WALL"]
+EFFICIENCY = .2
+MIN_FORCE = .1
 WALL_WEIGHT = 500
 BALL_ACCEL = 10
-JUMP_VEL = 5
+JUMP_VEL = 4
 
 WIN_ARC = .5
 
@@ -48,6 +49,8 @@ SEND_LOCK = threading.Lock()
 
 enemy_wins = 0
 my_wins = 0
+
+PLAYER_SIZE = 20
 
 
 def get_millis():
@@ -116,13 +119,13 @@ def get_input(prompt="", choices=None):
             return answer
 
 
-def elastic_bounce(m1, v1, m2, v2):
+def elastic_bounce(m1, v1, m2, v2, eff):
     """Returns the final vel of 1 after an elastic bounce"""
     force = (((m1 - m2) / (m1 + m2)) * v1) + (
             ((2 * m2) / (m1 + m2)) * v2)
     if abs(force) <= MIN_FORCE:
         return 0
-    return force * EFFICIENCY
+    return force * EFFICIENCY * eff
 
 
 def angle_of_points(point1, point2):
@@ -140,23 +143,31 @@ def get_dist(point1, point2):
         (point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
 
 
-def PointsInCircum(r,n=100):
+def PointsInCircum(r, n=100):
     """Found here: https://stackoverflow.com/a/8488079/7587147"""
-    return [(math.cos(2*math.pi/n*x)*r,math.sin(2*math.pi/n*x)*r) for x in range(0,n+1)]
+    return [
+        (math.cos(2 * math.pi / n * x) * r, math.sin(2 * math.pi / n * x) * r)
+        for x in range(0, n + 1)]
 
 
 class Player(threading.Thread):
-    def __init__(self, _connection=None):
+    def __init__(self, _connection=None, _poet=None):
         super().__init__()
         self.connection = _connection
+        self.poet = _poet
         self.pos = None
         self.radius = None
         self.vel = None
-        self.mass = 10
         self.color = (255, 255, 255)
         self.border = (125, 125, 125)
         self.local = None
-        self.path = get_game_root() + "Auden.jpg"
+        self.path = get_game_root() + self.poet.lower() + ".jpg"
+        self.era = find_poet(self.poet)[0]
+        self.atts = find_poet(self.poet)[1]
+        self.jumps = 1
+        self.jump_start = 3
+        self.air_move = False
+        self.mass = 10 // self.atts["bounce"]
 
     def run(self):
         global quit_running, send_time, recv_time, recv_int, send_int, enemy_wins
@@ -203,29 +214,39 @@ class Player(threading.Thread):
         width = display.get_width()
         height = display.get_height()
         self.vel = [0, 0]
-        self.radius = width // 32
-        if host:
+        self.radius = width // PLAYER_SIZE
+        if not host:
             self.pos = [self.radius * 2, height - self.radius * 2]
-            self.color = (255, 0, 0)
         else:
+            self.color = (255, 0, 0)
             self.pos = [width - self.radius * 2, height - self.radius * 2]
         if local:
             self.border = (0, 255, 0)
 
     def render(self):
+        if self.on_ground(True):
+            self.jumps = self.jump_start
+            self.air_move = False
         pygame.draw.circle(display, self.color, list(int(x) for x in self.pos),
                            self.radius)
         image = load(self.path)
-        image = pygame.transform.scale(image, [self.radius*2, self.radius*2])
+        image = pygame.transform.scale(image,
+                                       [self.radius, self.radius])
 
         # TODO: Use texture or picture with border?
-        # display.blit(image, [*list(x - self.radius for x in self.pos)])
-        # pygame.draw.circle(display, self.border, list(int(x) for x in self.pos),
-        #                    int(self.radius * 1.5), self.radius//2)
-        points = []
-        for point in PointsInCircum(self.radius, 300):  # TODO: optimise vertexes
-            points.append([self.pos[0] + point[0], self.pos[1] + point[1]])
-        pygame.gfxdraw.textured_polygon(display, points, image, int(self.pos[0] + self.radius*.75), int(self.pos[1] + self.radius*.75))  # TODO: Why jumpy?
+        display.blit(image, [*list(x - self.radius//2 for x in self.pos)])
+        pygame.draw.circle(display, self.color, list(int(x) for x in self.pos),
+                           int(self.radius), int(self.radius // 2))
+        pygame.draw.circle(display, self.color,
+                           list(int(x + 1) for x in self.pos),
+                           int(self.radius), int(self.radius // 2))
+        pygame.draw.circle(display, self.color,
+                           list(int(x - 1) for x in self.pos),
+                           int(self.radius), int(self.radius // 2))
+        # points = []
+        # for point in PointsInCircum(self.radius, 300):  # TODO: optimise vertexes
+        #     points.append([self.pos[0] + point[0], self.pos[1] + point[1]])
+        # pygame.gfxdraw.textured_polygon(display, points, image, int(self.pos[0] + self.radius*.75), int(self.pos[1] + self.radius*.75))  # TODO: Why jumpy?
 
     def tick(self, secs, balls):
         for i in range(0, 2):
@@ -250,9 +271,13 @@ class Player(threading.Thread):
                 if self.pos[i % 2] + self.radius >= RESOLUTION[i % 2]:
                     new_pos = RESOLUTION[i % 2] - (self.radius + 1)
                     opposite_pos = (self.radius + 1)
+                    if i == 3:
+                        eff = self.atts["elastic"]
+                    else:
+                        eff = 1
                     new_vel = elastic_bounce(self.mass,
                                              self.vel[i % 2],
-                                             WALL_WEIGHT, 0)
+                                             WALL_WEIGHT, 0, eff)
             else:
                 # TOP OR LEFT
                 if self.pos[i % 2] - self.radius <= 0:
@@ -260,7 +285,7 @@ class Player(threading.Thread):
                     opposite_pos = RESOLUTION[i % 2] - (self.radius + 1)
                     new_vel = elastic_bounce(self.mass,
                                              self.vel[i % 2],
-                                             WALL_WEIGHT, 0)
+                                             WALL_WEIGHT, 0, 1)
 
             if not isinstance(new_pos, type(None)):
                 if wall == "WALL":
@@ -268,6 +293,8 @@ class Player(threading.Thread):
                     self.vel[i % 2] = new_vel
                 elif wall == "LOOP":
                     self.pos[i % 2] = opposite_pos
+                elif wall == "HOLE":
+                    pass
                 else:
                     balls.remove(self)
             i += 1
@@ -281,13 +308,13 @@ class Player(threading.Thread):
                 selftempx = self.vel[0]
                 selftempy = self.vel[1]
                 self.vel[0] = elastic_bounce(self.mass, self.vel[0],
-                                             _ball.mass, _ball.vel[0])
+                                             _ball.mass, _ball.vel[0], 1)
                 self.vel[1] = elastic_bounce(self.mass, self.vel[1],
-                                             _ball.mass, _ball.vel[1])
+                                             _ball.mass, _ball.vel[1], 1)
                 _ball.vel[0] = elastic_bounce(_ball.mass, _ball.vel[0],
-                                              self.mass, selftempx)
+                                              self.mass, selftempx, 1)
                 _ball.vel[1] = elastic_bounce(_ball.mass, _ball.vel[1],
-                                              self.mass, selftempy)
+                                              self.mass, selftempy, 1)
 
                 angle1 = angle_of_points(self.pos, _ball.pos)
                 angle2 = angle_of_points(_ball.pos, self.pos)
@@ -311,8 +338,34 @@ class Player(threading.Thread):
             _collisions.append([self, _ball])
         return _collisions
 
-    def on_ground(self):
-        return self.pos[1] >= display.get_height() - self.radius * 1.5
+    def on_wall(self):
+        if self.on_ground(True):
+            return True
+        elif -self.radius <= self.pos[1] <= self.radius * 1.5:
+            return True
+        elif self.pos[0] >= display.get_width() - self.radius * 1.5:
+            return not self.pos[1] <= -self.radius  # Walls not above ceiling
+        elif self.pos[0] <= self.radius * 1.5:
+            return not self.pos[1] <= -self.radius
+        return False
+
+    def on_ground(self, touching=False, moved=True):
+        on_ground = self.pos[1] >= display.get_height() - self.radius * 1.5
+        if touching:
+            return on_ground
+        if self.era == "Romantic":
+            return on_ground
+        elif self.era == "Victorian":
+            if not moved and self.air_move:
+                return True
+            if self.jumps > 0:
+                self.air_move = True
+                self.jumps -= 1
+                return True
+            self.air_move = False
+            return False
+        else:
+            return self.on_wall()
 
 
 def reset():
@@ -350,11 +403,23 @@ def unformat_data(data):
     return data_list
 
 
-local_player = Player()
-remote_player = None
-hosting = False
+def choose_poet(player=1):
+    poet = "list"
+    while poet == "list":
+        poet = get_input(
+            "Player " + str(player) + ", Choose a poet. ['List'] for options: ",
+            get_all_poets() + ["List"])
+        if poet == "list":
+            print(get_all_poets())
+    print(poet.title())
+    return poet
+
 
 LOCAL_GAME = check_input("Yes", "Run local game? ", ["Yes", "No"])
+
+local_player = Player(_poet=choose_poet())
+remote_player = None
+hosting = False
 
 if not LOCAL_GAME:
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -376,7 +441,24 @@ if not LOCAL_GAME:
         server_sock.listen()
         connection, address = server_sock.accept()
         print("Player connected from " + str(address) + ".")
-        remote_player = Player(connection)
+        try:
+            data = connection.recv(BUFFER_SIZE)
+        except ConnectionResetError:
+            raise Exception("Server has closed")
+
+        poet = data.decode().strip().title()
+        remote_player = Player(connection, poet)
+
+        data_string = local_player.poet.ljust(BUFFER_SIZE, " ")
+        SEND_LOCK.acquire()
+        try:
+            connection.sendall(data_string.encode())
+        except ConnectionResetError:
+            print("Player left")
+            quit_running = True
+            raise SystemExit
+        SEND_LOCK.release()
+
     else:
         # Join
         print("Joining")
@@ -385,9 +467,26 @@ if not LOCAL_GAME:
         except OSError:
             raise Exception("Could not connect")
             # Look, my users won't know what a OSError is anyways
-        remote_player = Player(server_sock)
+        data_string = local_player.poet.ljust(BUFFER_SIZE, " ")
+        SEND_LOCK.acquire()
+        try:
+            server_sock.sendall(data_string.encode())
+        except ConnectionResetError:
+            print("Player left")
+            quit_running = True
+            raise SystemExit
+        SEND_LOCK.release()
+
+        try:
+            data = server_sock.recv(BUFFER_SIZE)
+        except ConnectionResetError:
+            raise Exception("Server has closed")
+
+        poet = data.decode().strip().title()
+
+        remote_player = Player(server_sock, poet)
 else:
-    remote_player = Player()
+    remote_player = Player(_poet=choose_poet())
 
 display = pygame.display.set_mode(RESOLUTION, FLAGS)
 
@@ -409,6 +508,7 @@ while not quit_running:
         if event.type == pygame.VIDEORESIZE:
             display = pygame.display.set_mode(event.dict["size"], FLAGS)
             RESOLUTION = event.dict["size"]
+            reset()
         elif event.type == pygame.QUIT:
             quit_running = True
             break
@@ -425,21 +525,33 @@ while not quit_running:
             key_downs.remove(event.dict["key"])
 
     if pygame.K_a in key_downs:
-        local_player.vel[0] -= BALL_ACCEL * secs
+        if local_player.on_ground(
+                moved=pygame.K_a in key_presses) or local_player.era != "Victorian":
+            local_player.vel[0] -= BALL_ACCEL * secs
     if pygame.K_d in key_downs:
-        local_player.vel[0] += BALL_ACCEL * secs
-    if pygame.K_w in key_presses or pygame.K_SPACE in key_presses:
-        if local_player.on_ground():
-            local_player.vel[1] -= JUMP_VEL
+        if local_player.on_ground(
+                moved=pygame.K_d in key_presses) or local_player.era != "Victorian":
+            local_player.vel[0] += BALL_ACCEL * secs
+    if pygame.K_w in key_presses or pygame.K_SPACE in key_presses or (
+            local_player.era != "Victorian" and (
+            pygame.K_w in key_downs or pygame.K_SPACE in key_downs)):
+        if local_player.on_ground(moved=True):
+            local_player.vel[1] -= JUMP_VEL * local_player.atts["jump vel"]
 
     if LOCAL_GAME:
         if pygame.K_LEFT in key_downs:
-            remote_player.vel[0] -= BALL_ACCEL * secs
+            if remote_player.on_ground(
+                    moved=pygame.K_LEFT in key_presses) or remote_player.era != "Victorian":
+                remote_player.vel[0] -= BALL_ACCEL * secs
         if pygame.K_RIGHT in key_downs:
-            remote_player.vel[0] += BALL_ACCEL * secs
-        if pygame.K_UP in key_presses:
-            if remote_player.on_ground():
-                remote_player.vel[1] -= JUMP_VEL
+            if remote_player.on_ground(
+                    moved=pygame.K_RIGHT in key_presses) or remote_player.era != "Victorian":
+                remote_player.vel[0] += BALL_ACCEL * secs
+        if pygame.K_UP in key_presses or (
+                remote_player.era != "Victorian" and pygame.K_UP in key_downs):
+            if remote_player.on_ground(moved=True):
+                remote_player.vel[1] -= JUMP_VEL * remote_player.atts[
+                    "jump vel"]
 
     new_sim_time = get_millis()
     secs = (new_sim_time - sim_time) / time_scale
