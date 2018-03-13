@@ -5,22 +5,39 @@ import threading
 
 import pygame
 
+
+pygame.init()
+
 LOCAL_TEST = False  # Set True to skip socket connection
 FLAGS = pygame.VIDEORESIZE
-RESOLUTION = [1280, 768]
+RESOLUTION = [500, 500]
 
 y_gravity = -9.81
 x_gravity = 0
 grid_scale = RESOLUTION[1] / 4
 time_scale = 1000
-WALLS = ["LOOP", "WALL", "LOOP", "WALL"]
+WALLS = ["WALL", "WALL", "WALL", "WALL"]
 EFFICIENCY = .5
 MIN_FORCE = .5
 WALL_WEIGHT = 500
 BALL_ACCEL = 10
 JUMP_VEL = 9
 
-BUFFER_SIZE = 40
+BUFFER_SIZE = 32
+BUFFER_PART = 8
+
+SLEEP_TIME = 0
+
+clock = pygame.time.Clock()
+
+send_time = -1000
+recv_time = -1000
+send_int = -553
+recv_int = -553
+
+PING_UPDATE = 1000
+PING_SIZE = 25
+ping_time = 0
 
 
 def get_millis():
@@ -126,8 +143,9 @@ class Player(threading.Thread):
         self.local = None
 
     def run(self):
+        global quit_running, send_time, recv_time, recv_int, send_int
         while True:
-            time.sleep(.1)
+            time.sleep(SLEEP_TIME)
             if not self.local:
                 try:
                     data = self.connection.recv(BUFFER_SIZE)
@@ -139,11 +157,21 @@ class Player(threading.Thread):
                     print("Lost connection")
                     break
                 data = unformat_data(data.decode())
-                self.pos = data[0:2]
-                self.vel = data[2:4]
-            else:
+                if not isinstance(data, type(None)):
+                    self.pos = data[0:2]
+                    self.vel = data[2:4]
+                recv_int = get_millis() * 1000 - recv_time
+                recv_time = get_millis() * 1000
+            else:  # TODO: Only send remote input. Calc all on local
                 data_string = format_data(*self.pos, *self.vel)
-                remote_player.connection.sendall(data_string.encode())
+                try:
+                    remote_player.connection.sendall(data_string.encode())
+                except ConnectionResetError:
+                    print("Player left")
+                    quit_running = True
+                    raise SystemExit
+                send_int = get_millis() * 1000 - send_time
+                send_time = get_millis() * 1000
 
     def reset(self, host=True, local=False):
         """Resets player position"""
@@ -169,7 +197,7 @@ class Player(threading.Thread):
     def tick(self, secs, balls):
         for i in range(0, 2):
             if i == 1:
-                self.vel[i] -= y_gravity * secs
+                self.vel[1] -= y_gravity * secs
             else:
                 self.vel[0] -= x_gravity * secs
             self.pos[i] += (self.vel[i] * secs) * grid_scale
@@ -249,25 +277,27 @@ def format_data(*data):
     string = ""
     for obj in data:
         if isinstance(obj, int) or isinstance(obj, float):
-            string += f'{obj:.10f}'[:10]
+            string += f'{obj:.{BUFFER_PART}f}'[:BUFFER_PART]
         else:
-            if len(obj) > 10:
-                string += obj[:10]
+            if len(obj) > BUFFER_PART:
+                string += obj[:BUFFER_PART]
             else:
-                string += obj.ljust(10, "~")
+                string += obj.ljust(BUFFER_PART, "~")
     return string
 
 
 def unformat_data(data):
+    if len(data) < BUFFER_SIZE:
+        return None  # Not all data received
     data_list = []
-    while len(data) >= 10:
-        part = data[:10]
+    while len(data) >= BUFFER_PART:
+        part = data[:BUFFER_PART]
         if not is_number(part):
             data_list.append(part.rstrip("~"))
         else:
             data_list.append(float(part))
-        if len(data) > 10:
-            data = data[10:]
+        if len(data) > BUFFER_PART:
+            data = data[BUFFER_PART:]
         else:
             break
     return data_list
@@ -392,5 +422,14 @@ while not quit_running:
         if i >= len(balls):
             break
 
+    if get_millis() - ping_time >= PING_UPDATE:
+        pings = str(int(send_int)).rjust(5) + " | " + str(int(recv_int)).rjust(5)
+        ping_time = get_millis()
+    font = pygame.font.SysFont("monospace", PING_SIZE)
+    label = font.render(pings, 1, (255, 255, 255))
+    width, height = font.size(pings)
+    display.blit(label, (int(display.get_width() - width * 1.25), height))
+
     pygame.display.flip()
     display.fill((0, 0, 0))
+    time.sleep(SLEEP_TIME)
