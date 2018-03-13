@@ -6,7 +6,7 @@ import threading
 import pygame
 
 LOCAL_TEST = False  # Set True to skip socket connection
-FLAGS = pygame.VIDEORESIZE + pygame.FULLSCREEN
+FLAGS = pygame.VIDEORESIZE
 RESOLUTION = [1280, 768]
 
 y_gravity = -9.81
@@ -136,7 +136,7 @@ class Player(threading.Thread):
                 print("Lost connection")
                 break
             print(data.decode())
-            self.pos, self.vel = data.decode()
+            self.pos, self.vel = eval(data.decode())
 
     def reset(self, left=True):
         """Resets player position"""
@@ -237,6 +237,7 @@ class Player(threading.Thread):
 
 local_player = Player()
 remote_player = None
+hosting = False
 
 if not LOCAL_TEST:
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -244,6 +245,7 @@ if not LOCAL_TEST:
 
     if check_input("Host", "Host or Join? ", ["Host", "Join"]):
         # HOST
+        hosting = True
         server_host = socket.gethostbyname(socket.gethostname())
         if not check_input("Yes", "Host on " + server_host + ":" + str(
                 server_port) + "? ", ["Yes", "No"]):
@@ -350,7 +352,9 @@ while not quit_running:
         if i >= len(balls):
             break
 
-    remote_player.update()
+    data_string = "[" + str(local_player.pos) + ", " + str(
+        local_player.vel) + "]"
+    local_player.connection.sendall(data_string.encode())
 
     pygame.display.flip()
     display.fill((0, 0, 0))
