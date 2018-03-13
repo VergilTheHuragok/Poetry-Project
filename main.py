@@ -20,7 +20,7 @@ WALL_WEIGHT = 500
 BALL_ACCEL = 10
 JUMP_VEL = 9
 
-BUFFER_SIZE = 24
+BUFFER_SIZE = 40
 
 
 def get_millis():
@@ -30,7 +30,7 @@ def get_millis():
 def is_number(num):
     """Checks if num is a number"""
     try:
-        int(num)
+        float(num)
     except ValueError:
         return False
     return True
@@ -92,7 +92,7 @@ def get_input(prompt="", choices=None):
 def elastic_bounce(m1, v1, m2, v2):
     """Returns the final vel of 1 after an elastic bounce"""
     force = (((m1 - m2) / (m1 + m2)) * v1) + (
-            ((2 * m2) / (m1 + m2)) * v2)
+        ((2 * m2) / (m1 + m2)) * v2)
     if abs(force) <= MIN_FORCE:
         return 0
     return force * EFFICIENCY
@@ -114,7 +114,6 @@ def get_dist(point1, point2):
 
 
 class Player(threading.Thread):
-
     def __init__(self, _connection=None):
         super().__init__()
         self.connection = _connection
@@ -122,39 +121,50 @@ class Player(threading.Thread):
         self.radius = None
         self.vel = None
         self.mass = 10
+        self.color = (255, 255, 255)
+        self.border = (125, 125, 125)
+        self.local = None
 
     def run(self):
         while True:
             time.sleep(.1)
-            try:
-                data = self.connection.recv(BUFFER_SIZE)
-            except ConnectionResetError:
-                print("Server has closed")
-                break
+            if not self.local:
+                try:
+                    data = self.connection.recv(BUFFER_SIZE)
+                except ConnectionResetError:
+                    print("Server has closed")
+                    break
 
-            if not data:
-                print("Lost connection")
-                break
-            print(data.decode())
-            self.pos, self.vel = eval(data.decode())
+                if not data:
+                    print("Lost connection")
+                    break
+                data = unformat_data(data.decode())
+                self.pos = data[0:2]
+                self.vel = data[2:4]
+            else:
+                data_string = format_data(*self.pos, *self.vel)
+                remote_player.connection.sendall(data_string.encode())
 
-    def reset(self, left=True):
+    def reset(self, host=True, local=False):
         """Resets player position"""
         global grid_scale
+        self.local = local
         grid_scale = RESOLUTION[1] / 4
         width = display.get_width()
         height = display.get_height()
         self.vel = [0, 0]
         self.radius = width // 32
-        if left:
+        if host:
             self.pos = [self.radius * 2, height - self.radius * 2]
+            self.color = (255, 0, 0)
         else:
             self.pos = [width - self.radius * 2, height - self.radius * 2]
+        if local:
+            self.border = (0, 255, 0)
 
     def render(self):
-        pygame.draw.circle(display, (255, 255, 255),
-                           list(int(x) for x in self.pos),
-                           self.radius)
+        pygame.draw.circle(display, self.border, list(int(x) for x in self.pos), int(self.radius*1.25))
+        pygame.draw.circle(display, self.color, list(int(x) for x in self.pos), self.radius)
 
     def tick(self, secs, balls):
         for i in range(0, 2):
@@ -205,7 +215,7 @@ class Player(threading.Thread):
         if _ball != self and not ([self, _ball] in _collisions
                                   or [_ball, self] in _collisions):
             dist = math.sqrt((_ball.pos[0] - self.pos[0]) ** 2 + (
-                    _ball.pos[1] - self.pos[1]) ** 2)
+                _ball.pos[1] - self.pos[1]) ** 2)
             if dist <= self.radius + _ball.radius:
                 selftempx = self.vel[0]
                 selftempy = self.vel[1]
@@ -221,7 +231,7 @@ class Player(threading.Thread):
                 angle1 = angle_of_points(self.pos, _ball.pos)
                 angle2 = angle_of_points(_ball.pos, self.pos)
                 n_dist2 = dist * (
-                        self.radius / (self.radius + _ball.radius))
+                    self.radius / (self.radius + _ball.radius))
 
                 center = angled_point(self.pos, angle1, n_dist2)
                 if get_dist(self.pos, center) <= self.radius:
@@ -233,6 +243,34 @@ class Player(threading.Thread):
 
     def on_ground(self):
         return self.pos[1] >= display.get_height() - self.radius * 1.5
+
+
+def format_data(*data):
+    string = ""
+    for obj in data:
+        if isinstance(obj, int) or isinstance(obj, float):
+            string += f'{obj:.10f}'[:10]
+        else:
+            if len(obj) > 10:
+                string += obj[:10]
+            else:
+                string += obj.ljust(10, "~")
+    return string
+
+
+def unformat_data(data):
+    data_list = []
+    while len(data) >= 10:
+        part = data[:10]
+        if not is_number(part):
+            data_list.append(part.rstrip("~"))
+        else:
+            data_list.append(float(part))
+        if len(data) > 10:
+            data = data[10:]
+        else:
+            break
+    return data_list
 
 
 local_player = Player()
@@ -263,7 +301,8 @@ if not LOCAL_TEST:
         remote_player = Player(connection)
     else:
         # Join
-        server_host = get_input("Enter the IP: ")
+        # server_host = get_input("Enter the IP: ")
+        server_host = socket.gethostbyname(socket.gethostname())  # TODO: Enter IP Manually: replace this with ^ line
         try:
             server_sock.connect((server_host, server_port))
         except OSError:
@@ -275,9 +314,10 @@ else:
 
 display = pygame.display.set_mode(RESOLUTION, FLAGS)
 
-local_player.reset()
-remote_player.reset(False)
+local_player.reset(hosting, True)
+remote_player.reset(not hosting, False)
 remote_player.start()
+local_player.start()
 balls = [local_player, remote_player]
 secs = 0
 sim_time = get_millis()
@@ -326,11 +366,11 @@ while not quit_running:
                     ball_dir = "STOPPING"
 
     if ball_dir == "LEFT":
-        balls[0].vel[0] -= BALL_ACCEL * secs
+        local_player.vel[0] -= BALL_ACCEL * secs
     if ball_dir == "RIGHT":
-        balls[0].vel[0] += BALL_ACCEL * secs
+        local_player.vel[0] += BALL_ACCEL * secs
     if ball_dir == "UPPING":
-        balls[0].vel[1] += JUMP_VEL
+        local_player.vel[1] += JUMP_VEL
 
     new_sim_time = get_millis()
     secs = (new_sim_time - sim_time) / time_scale
@@ -351,9 +391,6 @@ while not quit_running:
         i += 1
         if i >= len(balls):
             break
-
-    data_string = "[" + f'{local_player.pos:.10f}'[:10] + ", " + f'{local_player.vel:.10f}'[:10] + "]"
-    remote_player.connection.sendall(data_string.encode())
 
     pygame.display.flip()
     display.fill((0, 0, 0))
