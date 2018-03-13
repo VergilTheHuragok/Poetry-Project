@@ -4,13 +4,15 @@ import time
 import threading
 
 import pygame
+from pygame.image import load
+import pygame.gfxdraw
 
+from configs import get_game_root
 
 pygame.init()
 
-LOCAL_TEST = False  # Set True to skip socket connection
 FLAGS = pygame.VIDEORESIZE
-RESOLUTION = [500, 500]
+RESOLUTION = [800, 500]
 
 y_gravity = -9.81
 x_gravity = 0
@@ -21,7 +23,7 @@ EFFICIENCY = .5
 MIN_FORCE = .5
 WALL_WEIGHT = 500
 BALL_ACCEL = 10
-JUMP_VEL = 9
+JUMP_VEL = 5
 
 WIN_ARC = .5
 
@@ -46,6 +48,7 @@ SEND_LOCK = threading.Lock()
 
 enemy_wins = 0
 my_wins = 0
+
 
 def get_millis():
     return time.time() * 1000
@@ -116,7 +119,7 @@ def get_input(prompt="", choices=None):
 def elastic_bounce(m1, v1, m2, v2):
     """Returns the final vel of 1 after an elastic bounce"""
     force = (((m1 - m2) / (m1 + m2)) * v1) + (
-        ((2 * m2) / (m1 + m2)) * v2)
+            ((2 * m2) / (m1 + m2)) * v2)
     if abs(force) <= MIN_FORCE:
         return 0
     return force * EFFICIENCY
@@ -137,6 +140,11 @@ def get_dist(point1, point2):
         (point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
 
 
+def PointsInCircum(r,n=100):
+    """Found here: https://stackoverflow.com/a/8488079/7587147"""
+    return [(math.cos(2*math.pi/n*x)*r,math.sin(2*math.pi/n*x)*r) for x in range(0,n+1)]
+
+
 class Player(threading.Thread):
     def __init__(self, _connection=None):
         super().__init__()
@@ -148,6 +156,7 @@ class Player(threading.Thread):
         self.color = (255, 255, 255)
         self.border = (125, 125, 125)
         self.local = None
+        self.path = get_game_root() + "Auden.jpg"
 
     def run(self):
         global quit_running, send_time, recv_time, recv_int, send_int, enemy_wins
@@ -204,8 +213,19 @@ class Player(threading.Thread):
             self.border = (0, 255, 0)
 
     def render(self):
-        pygame.draw.circle(display, self.border, list(int(x) for x in self.pos), int(self.radius*1.25))
-        pygame.draw.circle(display, self.color, list(int(x) for x in self.pos), self.radius)
+        pygame.draw.circle(display, self.color, list(int(x) for x in self.pos),
+                           self.radius)
+        image = load(self.path)
+        image = pygame.transform.scale(image, [self.radius*2, self.radius*2])
+
+        # TODO: Use texture or picture with border?
+        # display.blit(image, [*list(x - self.radius for x in self.pos)])
+        # pygame.draw.circle(display, self.border, list(int(x) for x in self.pos),
+        #                    int(self.radius * 1.5), self.radius//2)
+        points = []
+        for point in PointsInCircum(self.radius, 300):  # TODO: optimise vertexes
+            points.append([self.pos[0] + point[0], self.pos[1] + point[1]])
+        pygame.gfxdraw.textured_polygon(display, points, image, int(self.pos[0] + self.radius*.75), int(self.pos[1] + self.radius*.75))  # TODO: Why jumpy?
 
     def tick(self, secs, balls):
         for i in range(0, 2):
@@ -256,7 +276,7 @@ class Player(threading.Thread):
         if _ball != self and not ([self, _ball] in _collisions
                                   or [_ball, self] in _collisions):
             dist = math.sqrt((_ball.pos[0] - self.pos[0]) ** 2 + (
-                _ball.pos[1] - self.pos[1]) ** 2)
+                    _ball.pos[1] - self.pos[1]) ** 2)
             if dist <= self.radius + _ball.radius:
                 selftempx = self.vel[0]
                 selftempy = self.vel[1]
@@ -271,12 +291,17 @@ class Player(threading.Thread):
 
                 angle1 = angle_of_points(self.pos, _ball.pos)
                 angle2 = angle_of_points(_ball.pos, self.pos)
+
                 if self.local:
                     if -WIN_ARC < angle1 < WIN_ARC:
                         # Jumped on opponent's head
                         return "WIN"
+                    elif -WIN_ARC < angle2 < WIN_ARC and LOCAL_GAME:
+                        # Jumped on my head
+                        return "LOST"
+
                 n_dist2 = dist * (
-                    self.radius / (self.radius + _ball.radius))
+                        self.radius / (self.radius + _ball.radius))
 
                 center = angled_point(self.pos, angle1, n_dist2)
                 if get_dist(self.pos, center) <= self.radius:
@@ -329,18 +354,19 @@ local_player = Player()
 remote_player = None
 hosting = False
 
-if not LOCAL_TEST:
+LOCAL_GAME = check_input("Yes", "Run local game? ", ["Yes", "No"])
+
+if not LOCAL_GAME:
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_port = get_int("Enter the port: ")
-
+    server_host = socket.gethostbyname(socket.gethostname())
+    if not check_input("Yes", "Use system IP: " + server_host + ":" + str(
+            server_port) + "? ", ["Yes", "No"]):
+        server_host = get_input("Enter the IP: ")
     if check_input("Host", "Host or Join? ", ["Host", "Join"]):
         # HOST
         hosting = True
-        server_host = socket.gethostbyname(socket.gethostname())
-        if not check_input("Yes", "Host on " + server_host + ":" + str(
-                server_port) + "? ", ["Yes", "No"]):
-            # Do not host on machine port for some reason
-            server_host = get_input("Enter the IP: ")
+        print("Hosting")
         try:
             server_sock.bind((server_host, server_port))
         except OSError:
@@ -353,8 +379,7 @@ if not LOCAL_TEST:
         remote_player = Player(connection)
     else:
         # Join
-        # server_host = get_input("Enter the IP: ")
-        server_host = socket.gethostbyname(socket.gethostname())  # TODO: Enter IP Manually: replace this with ^ line
+        print("Joining")
         try:
             server_sock.connect((server_host, server_port))
         except OSError:
@@ -369,23 +394,17 @@ display = pygame.display.set_mode(RESOLUTION, FLAGS)
 quit_running = False
 
 reset()
-remote_player.start()
-local_player.start()
+if not LOCAL_GAME:
+    remote_player.start()
+    local_player.start()
 balls = [local_player, remote_player]
 secs = 0
 sim_time = get_millis()
 
-ball_dir = "STOP"
+key_downs = set()
 
 while not quit_running:
-    if ball_dir == "STOPPING":
-        ball_dir = "STOP"
-    elif ball_dir == "LEFTING":
-        ball_dir = "LEFT"
-    elif ball_dir == "RIGHTING":
-        ball_dir = "RIGHT"
-    elif ball_dir == "UPPING":
-        ball_dir = "UP"
+    key_presses = set()
     for event in pygame.event.get():
         if event.type == pygame.VIDEORESIZE:
             display = pygame.display.set_mode(event.dict["size"], FLAGS)
@@ -394,35 +413,33 @@ while not quit_running:
             quit_running = True
             break
         elif event.type == pygame.KEYDOWN:
-            if event.dict["key"] == pygame.K_ESCAPE:
+            key = event.dict["key"]
+            if key == pygame.K_ESCAPE:
                 quit_running = True
                 break
-            elif event.dict["key"] == pygame.K_LEFT:
-                ball_dir = "LEFTING"
-            elif event.dict["key"] == pygame.K_SPACE \
-                    or event.dict["key"] == pygame.K_UP:
-                if local_player.on_ground():
-                    ball_dir = "UPPING"
-            elif event.dict["key"] == pygame.K_RIGHT:
-                ball_dir = "RIGHTING"
+            else:
+                if key not in key_downs:
+                    key_presses.add(key)
+                key_downs.add(key)
         elif event.type == pygame.KEYUP:
-            if event.dict["key"] == pygame.K_LEFT:
-                if ball_dir == "LEFT":
-                    ball_dir = "STOPPING"
-            elif event.dict["key"] == pygame.K_RIGHT:
-                if ball_dir == "RIGHT":
-                    ball_dir = "STOPPING"
-            elif event.dict["key"] == pygame.K_UP \
-                    or event.dict["key"] == pygame.K_SPACE:
-                if ball_dir == "UP":
-                    ball_dir = "STOPPING"
+            key_downs.remove(event.dict["key"])
 
-    if ball_dir == "LEFT":
+    if pygame.K_a in key_downs:
         local_player.vel[0] -= BALL_ACCEL * secs
-    if ball_dir == "RIGHT":
+    if pygame.K_d in key_downs:
         local_player.vel[0] += BALL_ACCEL * secs
-    if ball_dir == "UPPING":
-        local_player.vel[1] += JUMP_VEL
+    if pygame.K_w in key_presses or pygame.K_SPACE in key_presses:
+        if local_player.on_ground():
+            local_player.vel[1] -= JUMP_VEL
+
+    if LOCAL_GAME:
+        if pygame.K_LEFT in key_downs:
+            remote_player.vel[0] -= BALL_ACCEL * secs
+        if pygame.K_RIGHT in key_downs:
+            remote_player.vel[0] += BALL_ACCEL * secs
+        if pygame.K_UP in key_presses:
+            if remote_player.on_ground():
+                remote_player.vel[1] -= JUMP_VEL
 
     new_sim_time = get_millis()
     secs = (new_sim_time - sim_time) / time_scale
@@ -439,6 +456,11 @@ while not quit_running:
                 my_wins += 1
                 win = True
                 break
+            elif collisions == "LOST":
+                # Only can occur in local game
+                enemy_wins += 1
+                win = True
+                break
             if balls[i].tick(secs, balls):
                 i -= 1
             balls[i].render()
@@ -451,21 +473,25 @@ while not quit_running:
 
     if win:
         reset()
-        SEND_LOCK.acquire()
-        try:
-            remote_player.connection.sendall("WIN".ljust(BUFFER_SIZE, " ").encode())
-        except ConnectionResetError:
-            print("Player left")
-            quit_running = True
-            raise SystemExit
-        SEND_LOCK.release()
-    if get_millis() - ping_time >= PING_UPDATE:
-        pings = str(int(send_int)).rjust(5) + " | " + str(int(recv_int)).rjust(5)
-        ping_time = get_millis()
+        if not LOCAL_GAME:
+            SEND_LOCK.acquire()
+            try:
+                remote_player.connection.sendall(
+                    "WIN".ljust(BUFFER_SIZE, " ").encode())
+            except ConnectionResetError:
+                print("Player left")
+                quit_running = True
+                raise SystemExit
+            SEND_LOCK.release()
     font = pygame.font.SysFont("monospace", PING_SIZE)
-    label = font.render(pings, 1, (255, 255, 255))
-    width, height = font.size(pings)
-    display.blit(label, (int(display.get_width() - width), height))
+    if not LOCAL_GAME:
+        if get_millis() - ping_time >= PING_UPDATE:
+            pings = str(int(send_int)).rjust(5) + " | " + str(
+                int(recv_int)).rjust(5)
+            ping_time = get_millis()
+        label = font.render(pings, 1, (255, 255, 255))
+        width, height = font.size(pings)
+        display.blit(label, (int(display.get_width() - width), height))
     score = str(my_wins) + " | " + str(enemy_wins)
     label = font.render(score.strip(" "), 1, (50, 50, 255))
     width, height = font.size(score.strip(" "))
