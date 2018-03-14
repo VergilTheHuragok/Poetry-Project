@@ -2,6 +2,7 @@ import socket
 import math
 import time
 import threading
+import random
 
 import pygame
 from pygame.image import load
@@ -148,11 +149,14 @@ def get_dist(point1, point2):
         (point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
 
 
-def PointsInCircum(r, n=100):
-    """Found here: https://stackoverflow.com/a/8488079/7587147"""
-    return [
-        (math.cos(2 * math.pi / n * x) * r, math.sin(2 * math.pi / n * x) * r)
-        for x in range(0, n + 1)]
+def shift(pos, rad):
+    return (int(random.randint(-rad, rad) + pos[0]), int(random.randint(-rad, rad) + pos[1]))
+
+
+def invert(pos, _invert):
+    if _invert:
+        return (display.get_width() - pos[0], pos[1])
+    return pos
 
 
 class Player(threading.Thread):
@@ -225,18 +229,23 @@ class Player(threading.Thread):
         width = display.get_width()
         height = display.get_height()
         self.vel = [0, 0]
-        self.radius = width // PLAYER_SIZE
+        self.radius = int((width // PLAYER_SIZE) * get_att(self, "size", 1))
         if not host:
             self.pos = [self.radius * 2, height - self.radius * 2]
         else:
             self.color = RIGHT_COLOR
             self.pos = [width - self.radius * 2, height - self.radius * 2]
 
-    def render(self):
+    def render(self, _invert=False):
         if self.on_ground(True):
             self.jumps = self.jump_start
             self.air_move = False
-        pygame.draw.circle(display, self.color, list(int(x) for x in self.pos),
+
+        if get_att(self, "gas", False):
+            for k in range(0, random.randint(1, 10)):
+                pygame.draw.circle(display, (25, 100, 25), shift(invert(self.pos, _invert), self.radius), int(random.randint(0, self.radius*4)))
+
+        pygame.draw.circle(display, self.color, list(int(x) for x in invert(self.pos, _invert)),
                            self.radius)
         image = load(self.path)
         image = pygame.transform.scale(image,
@@ -244,29 +253,29 @@ class Player(threading.Thread):
         if self.vel[0] < 0:
             image = pygame.transform.flip(image, True, False)
 
-        # TODO: Use texture or picture with border?
-        display.blit(image, [*list(x - self.radius//1.5 for x in self.pos)])
-        pygame.draw.circle(display, self.color, list(int(x) for x in self.pos),
+        display.blit(image, [*list(x - self.radius//1.5 for x in invert(self.pos, _invert))])
+
+        # I was running out of time, ok?
+        pygame.draw.circle(display, self.color, list(int(x) for x in invert(self.pos, _invert)),
                            int(self.radius), int(self.radius // 3))
         pygame.draw.circle(display, self.color,
-                           list(int(x + 1) for x in self.pos),
+                           list(int(x + 1) for x in invert(self.pos, _invert)),
                            int(self.radius), int(self.radius // 3))
         pygame.draw.circle(display, self.color,
-                           list(int(x - 1) for x in self.pos),
+                           list(int(x - 1) for x in invert(self.pos, _invert)),
                            int(self.radius), int(self.radius // 3))
         pygame.draw.circle(display, self.era_color,
-                           list(int(x) for x in self.pos),
+                           list(int(x) for x in invert(self.pos, _invert)),
                            int(self.radius), int(self.radius // 8))
         pygame.draw.circle(display, self.era_color,
-                           list(int(x - 1) for x in self.pos),
+                           list(int(x - 1) for x in invert(self.pos, _invert)),
                            int(self.radius), int(self.radius // 8))
         pygame.draw.circle(display, self.era_color,
-                           list(int(x + 1) for x in self.pos),
+                           list(int(x + 1) for x in invert(self.pos, _invert)),
                            int(self.radius), int(self.radius // 8))
-        # points = []
-        # for point in PointsInCircum(self.radius, 300):  # TODO: optimise vertexes
-        #     points.append([self.pos[0] + point[0], self.pos[1] + point[1]])
-        # pygame.gfxdraw.textured_polygon(display, points, image, int(self.pos[0] + self.radius*.75), int(self.pos[1] + self.radius*.75))  # TODO: Why jumpy?
+
+        if get_att(self, "visions", False) and not _invert:
+            self.render(True)
 
     def tick(self, secs, balls):
         for i in range(0, 2):
@@ -340,10 +349,10 @@ class Player(threading.Thread):
                 angle2 = angle_of_points(_ball.pos, self.pos)
 
                 if self.local:
-                    if -WIN_ARC < angle1 < WIN_ARC:
+                    if -WIN_ARC < angle1 < WIN_ARC and not get_att(remote_player, "do not go gentle", False):
                         # Jumped on opponent's head
                         return "WIN"
-                    elif -WIN_ARC < angle2 < WIN_ARC and LOCAL_GAME:
+                    elif -WIN_ARC < angle2 < WIN_ARC and LOCAL_GAME and not get_att(self, "do not go gentle", False):
                         # Jumped on my head
                         return "LOST"
 
@@ -439,6 +448,10 @@ def get_att(player, att, default=None):
     if att in player.atts:
         return player.atts[att]
     return default
+
+
+def jump(player, power=1):
+    player.vel[1] -= JUMP_VEL * get_att(player, "jump vel", 1) * power
 
 
 LOCAL_GAME = check_input("Yes", "Run local game? ", ["Yes", "No"])
@@ -562,7 +575,9 @@ while not quit_running:
             local_player.era != "Victorian" and (
             pygame.K_w in key_downs or pygame.K_SPACE in key_downs)):
         if local_player.on_ground(moved=True):
-            local_player.vel[1] -= JUMP_VEL * get_att(local_player, "jump vel", 1)
+            jump(local_player)
+    if get_att(local_player, "mad jack", False) and local_player.on_ground():
+        jump(local_player, get_att(local_player, "mad jack", 1))
 
     if LOCAL_GAME:
         if pygame.K_LEFT in key_downs:
@@ -576,7 +591,9 @@ while not quit_running:
         if pygame.K_UP in key_presses or (
                 remote_player.era != "Victorian" and pygame.K_UP in key_downs):
             if remote_player.on_ground(moved=True):
-                remote_player.vel[1] -= JUMP_VEL * get_att(remote_player, "jump vel", 1)
+                jump(remote_player)
+        if get_att(remote_player, "mad jack", False) and remote_player.on_ground():
+            jump(remote_player, get_att(remote_player, "mad jack", 1))
 
     new_sim_time = get_millis()
     secs = (new_sim_time - sim_time) / time_scale
@@ -642,5 +659,3 @@ while not quit_running:
     pygame.display.flip()
     display.fill((0, 0, 0))
     # time.sleep(SLEEP_TIME)
-
-# TODO: Add local play

@@ -7,10 +7,12 @@ master_poets = {
             "elastic": 1
         },
         "William Blake": {
+            "visions": True,
         },
         "Mary Robinson": {
         },
         "Robert Burns": {
+            "size": .4,
         },
         "William Wordsworth": {
         },
@@ -22,7 +24,7 @@ master_poets = {
     },
     "Victorian": {
         "atts": {
-            "jump vel": 1.1,
+            "jump vel": 1.5,
             "bounce": 1,
             "elastic": 1
         },
@@ -51,11 +53,13 @@ master_poets = {
         "Rupert Brooke": {
         },
         "Wilfred Owen": {
+            "gas": True,
         },
         "Wystan Auden": {
-            "ground factor": 50,
+            "jump vel": 3,
         },
         "Dylan Thomas": {
+            "do not go gentle": True,
         },
         "Ted Hughes": {
         },
@@ -64,11 +68,14 @@ master_poets = {
         "Seamus Heaney": {
         },
         "Elaine Feinstein": {
+            "jump vel": 0,
+            "accel": .1,
         },
         "Rita Dove": {
-            "jump vel": 2,
+            "ground factor": 50,
         },
         "Siegfried Sassoon": {
+            "mad jack": 5,
         },
     }
 }
