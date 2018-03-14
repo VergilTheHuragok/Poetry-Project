@@ -6,9 +6,19 @@ master_poets = {
             "bounce": 1,
             "elastic": 1
         },
-
-        "Wordsworth": {
-        }
+        "William Blake": {
+        },
+        "Mary Robinson": {
+        },
+        "Robert Burns": {
+        },
+        "William Wordsworth": {
+        },
+        "Lord Byron": {
+            "jump vel": 0,
+        },
+        "Percy Shelley": {
+        },
     },
     "Victorian": {
         "atts": {
@@ -17,8 +27,17 @@ master_poets = {
             "elastic": 1
         },
 
-        "Hardy": {
-        }
+        "Elizabeth Browning": {
+        },
+        "Robert Browning": {
+        },
+        "Thomas Hardy": {
+            "accel": 4,
+        },
+        "Gerard Hopkins": {
+        },
+        "Alfred Housman": {
+        },
     },
     "20C": {
         "atts": {
@@ -26,8 +45,31 @@ master_poets = {
             "bounce": 3,
             "elastic": 4
         },
-        "Auden": {
-        }
+        "William Yeats": {
+            "elastic": 5,
+        },
+        "Rupert Brooke": {
+        },
+        "Wilfred Owen": {
+        },
+        "Wystan Auden": {
+            "ground factor": 50,
+        },
+        "Dylan Thomas": {
+        },
+        "Ted Hughes": {
+        },
+        "Derek Walcott": {
+        },
+        "Seamus Heaney": {
+        },
+        "Elaine Feinstein": {
+        },
+        "Rita Dove": {
+            "jump vel": 2,
+        },
+        "Siegfried Sassoon": {
+        },
     }
 }
 
@@ -47,6 +89,7 @@ def find_poet(poet):
         if poet in master_poets[group]:
             att_dict = master_poets[group][poet]
             for att in master_poets[group]["atts"]:
-                att_dict[att] = master_poets[group]["atts"][att]
+                if att not in master_poets[group][poet]:
+                    att_dict[att] = master_poets[group]["atts"][att]
             return group, att_dict
     raise Exception("Poet: " + poet + " does not exist.")

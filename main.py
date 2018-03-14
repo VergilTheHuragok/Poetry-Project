@@ -42,7 +42,7 @@ recv_int = -553
 
 PING_UPDATE = 500
 PING_FACTOR = 10
-PING_SIZE = 15
+PING_SIZE = 50
 ping_time = 0
 
 SEND_LOCK = threading.Lock()
@@ -51,6 +51,11 @@ enemy_wins = 0
 my_wins = 0
 
 PLAYER_SIZE = 20
+
+LEFT_COLOR = (125, 125, 125)
+RIGHT_COLOR = (255, 255, 255)
+
+GROUND_FACTOR = 1.25
 
 
 def get_millis():
@@ -158,16 +163,22 @@ class Player(threading.Thread):
         self.pos = None
         self.radius = None
         self.vel = None
-        self.color = (255, 255, 255)
-        self.border = (125, 125, 125)
+        self.color = LEFT_COLOR
         self.local = None
         self.path = get_game_root() + self.poet.lower() + ".jpg"
         self.era = find_poet(self.poet)[0]
         self.atts = find_poet(self.poet)[1]
         self.jumps = 1
-        self.jump_start = 3
+        self.jump_start = 2
         self.air_move = False
         self.mass = 10 // self.atts["bounce"]
+
+        if self.era == "Romantic":
+            self.era_color = (255, 50, 50)
+        elif self.era == "Victorian":
+            self.era_color = (50, 50, 50)
+        else:
+            self.era_color = (50, 125, 50)
 
     def run(self):
         global quit_running, send_time, recv_time, recv_int, send_int, enemy_wins
@@ -218,10 +229,8 @@ class Player(threading.Thread):
         if not host:
             self.pos = [self.radius * 2, height - self.radius * 2]
         else:
-            self.color = (255, 0, 0)
+            self.color = RIGHT_COLOR
             self.pos = [width - self.radius * 2, height - self.radius * 2]
-        if local:
-            self.border = (0, 255, 0)
 
     def render(self):
         if self.on_ground(True):
@@ -231,18 +240,29 @@ class Player(threading.Thread):
                            self.radius)
         image = load(self.path)
         image = pygame.transform.scale(image,
-                                       [self.radius, self.radius])
+                                       [int(self.radius*1.3), int(self.radius*1.3)])
+        if self.vel[0] < 0:
+            image = pygame.transform.flip(image, True, False)
 
         # TODO: Use texture or picture with border?
-        display.blit(image, [*list(x - self.radius//2 for x in self.pos)])
+        display.blit(image, [*list(x - self.radius//1.5 for x in self.pos)])
         pygame.draw.circle(display, self.color, list(int(x) for x in self.pos),
-                           int(self.radius), int(self.radius // 2))
+                           int(self.radius), int(self.radius // 3))
         pygame.draw.circle(display, self.color,
                            list(int(x + 1) for x in self.pos),
-                           int(self.radius), int(self.radius // 2))
+                           int(self.radius), int(self.radius // 3))
         pygame.draw.circle(display, self.color,
                            list(int(x - 1) for x in self.pos),
-                           int(self.radius), int(self.radius // 2))
+                           int(self.radius), int(self.radius // 3))
+        pygame.draw.circle(display, self.era_color,
+                           list(int(x) for x in self.pos),
+                           int(self.radius), int(self.radius // 8))
+        pygame.draw.circle(display, self.era_color,
+                           list(int(x - 1) for x in self.pos),
+                           int(self.radius), int(self.radius // 8))
+        pygame.draw.circle(display, self.era_color,
+                           list(int(x + 1) for x in self.pos),
+                           int(self.radius), int(self.radius // 8))
         # points = []
         # for point in PointsInCircum(self.radius, 300):  # TODO: optimise vertexes
         #     points.append([self.pos[0] + point[0], self.pos[1] + point[1]])
@@ -341,16 +361,16 @@ class Player(threading.Thread):
     def on_wall(self):
         if self.on_ground(True):
             return True
-        elif -self.radius <= self.pos[1] <= self.radius * 1.5:
+        elif -self.radius <= self.pos[1] <= self.radius * get_att(self, "ground factor", GROUND_FACTOR):
             return True
-        elif self.pos[0] >= display.get_width() - self.radius * 1.5:
+        elif self.pos[0] >= display.get_width() - self.radius * get_att(self, "ground factor", GROUND_FACTOR):
             return not self.pos[1] <= -self.radius  # Walls not above ceiling
-        elif self.pos[0] <= self.radius * 1.5:
+        elif self.pos[0] <= self.radius * GROUND_FACTOR:
             return not self.pos[1] <= -self.radius
         return False
 
     def on_ground(self, touching=False, moved=True):
-        on_ground = self.pos[1] >= display.get_height() - self.radius * 1.5
+        on_ground = self.pos[1] >= display.get_height() - self.radius * get_att(self, "ground factor", GROUND_FACTOR)
         if touching:
             return on_ground
         if self.era == "Romantic":
@@ -413,6 +433,12 @@ def choose_poet(player=1):
             print(get_all_poets())
     print(poet.title())
     return poet
+
+
+def get_att(player, att, default=None):
+    if att in player.atts:
+        return player.atts[att]
+    return default
 
 
 LOCAL_GAME = check_input("Yes", "Run local game? ", ["Yes", "No"])
@@ -527,31 +553,30 @@ while not quit_running:
     if pygame.K_a in key_downs:
         if local_player.on_ground(
                 moved=pygame.K_a in key_presses) or local_player.era != "Victorian":
-            local_player.vel[0] -= BALL_ACCEL * secs
+            local_player.vel[0] -= BALL_ACCEL * secs * get_att(local_player, "accel", 1)
     if pygame.K_d in key_downs:
         if local_player.on_ground(
                 moved=pygame.K_d in key_presses) or local_player.era != "Victorian":
-            local_player.vel[0] += BALL_ACCEL * secs
+            local_player.vel[0] += BALL_ACCEL * secs * get_att(local_player, "accel", 1)
     if pygame.K_w in key_presses or pygame.K_SPACE in key_presses or (
             local_player.era != "Victorian" and (
             pygame.K_w in key_downs or pygame.K_SPACE in key_downs)):
         if local_player.on_ground(moved=True):
-            local_player.vel[1] -= JUMP_VEL * local_player.atts["jump vel"]
+            local_player.vel[1] -= JUMP_VEL * get_att(local_player, "jump vel", 1)
 
     if LOCAL_GAME:
         if pygame.K_LEFT in key_downs:
             if remote_player.on_ground(
                     moved=pygame.K_LEFT in key_presses) or remote_player.era != "Victorian":
-                remote_player.vel[0] -= BALL_ACCEL * secs
+                remote_player.vel[0] -= BALL_ACCEL * secs * get_att(remote_player, "accel", 1)
         if pygame.K_RIGHT in key_downs:
             if remote_player.on_ground(
                     moved=pygame.K_RIGHT in key_presses) or remote_player.era != "Victorian":
-                remote_player.vel[0] += BALL_ACCEL * secs
+                remote_player.vel[0] += BALL_ACCEL * secs * get_att(remote_player, "accel", 1)
         if pygame.K_UP in key_presses or (
                 remote_player.era != "Victorian" and pygame.K_UP in key_downs):
             if remote_player.on_ground(moved=True):
-                remote_player.vel[1] -= JUMP_VEL * remote_player.atts[
-                    "jump vel"]
+                remote_player.vel[1] -= JUMP_VEL * get_att(remote_player, "jump vel", 1)
 
     new_sim_time = get_millis()
     secs = (new_sim_time - sim_time) / time_scale
@@ -595,7 +620,7 @@ while not quit_running:
                 quit_running = True
                 raise SystemExit
             SEND_LOCK.release()
-    font = pygame.font.SysFont("monospace", PING_SIZE)
+    font = pygame.font.SysFont("monospace", PING_SIZE//2)
     if not LOCAL_GAME:
         if get_millis() - ping_time >= PING_UPDATE:
             pings = str(int(send_int)).rjust(5) + " | " + str(
@@ -604,10 +629,15 @@ while not quit_running:
         label = font.render(pings, 1, (255, 255, 255))
         width, height = font.size(pings)
         display.blit(label, (int(display.get_width() - width), height))
-    score = str(my_wins) + " | " + str(enemy_wins)
-    label = font.render(score.strip(" "), 1, (50, 50, 255))
-    width, height = font.size(score.strip(" "))
+    font = pygame.font.SysFont("monospace", PING_SIZE)
+    score = str(my_wins).strip(" ")
+    label = font.render(score, 1, LEFT_COLOR)
+    width1, height = font.size(score)
     display.blit(label, (0, height))
+    score = " " + str(enemy_wins).strip(" ")
+    label = font.render(score, 1, RIGHT_COLOR)
+    width2, height = font.size(score)
+    display.blit(label, (width1, height))
 
     pygame.display.flip()
     display.fill((0, 0, 0))
